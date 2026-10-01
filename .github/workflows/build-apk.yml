@@ -1,0 +1,47 @@
+name: Build Little Learners APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Extract Little Learners
+        run: |
+          rm -rf build_source
+          mkdir build_source
+          unzip -q Little_Learners_Flutter_v2.zip -d build_source
+          test -f build_source/little_learners/pubspec.yaml
+
+      - name: Generate Android project
+        working-directory: build_source/little_learners
+        run: flutter create --platforms=android .
+
+      - name: Install dependencies
+        working-directory: build_source/little_learners
+        run: flutter pub get
+
+      - name: Build Android APK
+        working-directory: build_source/little_learners
+        run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Little-Learners-APK
+          path: build_source/little_learners/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
