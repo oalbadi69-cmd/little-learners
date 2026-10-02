@@ -3,60 +3,72 @@ name: Build Little Learners APK
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   build-android:
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: app
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
+      - name: Extract fixed application
+        working-directory: .
+        run: unzip -q Little_Learners_Flutter_v3_fixed.zip
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.47.6'
           channel: stable
           cache: true
-
-      - name: Extract Little Learners
-        run: |
-          rm -rf build_source
-          mkdir build_source
-          unzip -q Little_Learners_Flutter_v3.zip -d build_source
-          echo "PROJECT_DIR=$(find build_source -type f -name pubspec.yaml -printf '%h\n' | head -n 1)" >> "$GITHUB_ENV"
-
-      - name: Verify Flutter project
-        run: |
-          echo "Flutter project: $PROJECT_DIR"
-          test -n "$PROJECT_DIR"
-          test -f "$PROJECT_DIR/pubspec.yaml"
-
       - name: Generate Android project
+        run: flutter create --platforms=android --project-name=little_learners .
+      - name: Configure Android speech visibility and app name
         run: |
-          cd "$PROJECT_DIR"
-          flutter create --platforms=android .
-
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('android/app/src/main/AndroidManifest.xml')
+          s = p.read_text().replace('android:label="little_learners"', 'android:label="Little Learners"')
+          s = s.replace('<queries>', '<queries><intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>')
+          p.write_text(s)
+          PY
       - name: Install dependencies
-        run: |
-          cd "$PROJECT_DIR"
-          flutter pub get
-
-      - name: Check Dart
-        run: |
-          cd "$PROJECT_DIR"
-          dart format --output=none .
-          flutter analyze --no-fatal-infos --no-fatal-warnings
-
+        run: flutter pub get
+      - name: Analyze Dart
+        run: flutter analyze --no-fatal-infos
+      - name: Test application
+        run: flutter test
       - name: Build Android APK
+        run: flutter build apk --release
+      - name: Verify APK and signature
         run: |
-          cd "$PROJECT_DIR"
-          flutter build apk --release
-
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK"
+          BUILD_TOOLS=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          "$BUILD_TOOLS/apksigner" verify --verbose "$APK"
+          "$BUILD_TOOLS/aapt" dump badging "$APK" > build/app/outputs/flutter-apk/apk-info.txt
+          cd build/app/outputs/flutter-apk
+          sha256sum app-release.apk > app-release.apk.sha256
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Little-Learners-Android-APK
-          path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-release.apk
+          path: |
+            app/build/app/outputs/flutter-apk/app-release.apk
+            app/build/app/outputs/flutter-apk/app-release.apk.sha256
+            app/build/app/outputs/flutter-apk/apk-info.txt
           if-no-files-found: error
+          retention-days: 30
